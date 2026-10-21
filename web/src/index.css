@@ -1,0 +1,74 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", "Segoe UI", sans-serif;
+  --font-serif: "PMingLiU", "Songti TC", "Times New Roman", serif;
+  --color-ink: #142033;
+  --color-paper: #eef1f4;
+  --color-brass: #8d6b32;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-paper);
+  color: var(--color-ink);
+}
+
+@keyframes loading-bar {
+  0% {
+    transform: translateX(-130%);
+  }
+  100% {
+    transform: translateX(430%);
+  }
+}
+
+@keyframes radar-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.loading-bar {
+  animation: loading-bar 1.35s ease-in-out infinite;
+}
+
+.radar-sweep {
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    transparent 292deg,
+    rgba(141, 107, 50, 0.08) 326deg,
+    rgba(226, 196, 140, 0.78) 360deg
+  );
+  animation: radar-spin 3.6s linear infinite;
+}
+
+@keyframes strategy-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.strategy-reveal {
+  animation: strategy-reveal 0.28s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loading-bar,
+  .radar-sweep,
+  .strategy-reveal {
+    animation: none;
+  }
+}

@@ -1,0 +1,171 @@
+{
+  "asOf": "2026-10-21",
+  "streets": [
+    {
+      "id": "beitun-nanxing-1st",
+      "name": "台中市北屯區南興一路",
+      "area": "機捷特區",
+      "match": ["南興一路"],
+      "listings": [
+        {
+          "distanceMeters": 80,
+          "deal": {
+            "asset": "building",
+            "id": "NX-35",
+            "tradedOn": "2026-09-02",
+            "publishedAddress": "台中市北屯區南興一路35號",
+            "totalPrice": 15600000,
+            "buildingAreaPing": 30,
+            "landSharePing": 3.6,
+            "parking": { "kind": "none" }
+          }
+        },
+        {
+          "distanceMeters": 140,
+          "deal": {
+            "asset": "building",
+            "id": "NX-88",
+            "tradedOn": "2026-08-18",
+            "publishedAddress": "台中市北屯區南興一路88號",
+            "totalPrice": 22000000,
+            "buildingAreaPing": 44,
+            "landSharePing": 5.1,
+            "parking": { "kind": "none" }
+          }
+        },
+        {
+          "distanceMeters": 220,
+          "deal": {
+            "asset": "building",
+            "id": "NX-126",
+            "tradedOn": "2026-06-09",
+            "publishedAddress": "台中市北屯區南興一路126號",
+            "totalPrice": 18900000,
+            "buildingAreaPing": 42,
+            "landSharePing": 4.8,
+            "parking": { "kind": "none" }
+          }
+        },
+        {
+          "distanceMeters": 310,
+          "deal": {
+            "asset": "building",
+            "id": "NX-168",
+            "tradedOn": "2026-07-01",
+            "publishedAddress": "台中市北屯區南興一路168號",
+            "totalPrice": 24800000,
+            "buildingAreaPing": 46,
+            "landSharePing": 5.4,
+            "parking": { "kind": "priced", "spaceCount": 1, "price": 2000000, "areaPing": 4 }
+          }
+        },
+        {
+          "distanceMeters": 410,
+          "deal": {
+            "asset": "building",
+            "id": "NX-210",
+            "tradedOn": "2026-04-22",
+            "publishedAddress": "台中市北屯區南興一路210號",
+            "totalPrice": 27500000,
+            "buildingAreaPing": 50,
+            "landSharePing": 6.2,
+            "parking": { "kind": "none" }
+          }
+        },
+        {
+          "distanceMeters": 160,
+          "deal": {
+            "asset": "parking",
+            "id": "NX-parking",
+            "tradedOn": "2026-07-15",
+            "publishedAddress": "台中市北屯區南興一路車位",
+            "totalPrice": 1800000,
+            "spaceCount": 1,
+            "areaPing": 6
+          }
+        },
+        {
+          "distanceMeters": 240,
+          "deal": {
+            "asset": "land",
+            "id": "NX-land",
+            "tradedOn": "2026-03-20",
+            "publishedAddress": "台中市北屯區南興段",
+            "totalPrice": 35000000,
+            "landAreaPing": 18
+          }
+        }
+      ]
+    },
+    {
+      "id": "daan-renai-section-4",
+      "name": "臺北市大安區仁愛路四段",
+      "area": "大安區",
+      "match": ["仁愛路四段"],
+      "listings": [
+        {
+          "distanceMeters": 120,
+          "deal": {
+            "asset": "building",
+            "id": "A-small",
+            "tradedOn": "2026-06-01",
+            "publishedAddress": "臺北市大安區仁愛路四段10號",
+            "totalPrice": 20000000,
+            "buildingAreaPing": 10,
+            "landSharePing": 2,
+            "parking": { "kind": "none" }
+          }
+        },
+        {
+          "distanceMeters": 420,
+          "deal": {
+            "asset": "building",
+            "id": "A-large",
+            "tradedOn": "2026-08-01",
+            "publishedAddress": "臺北市大安區仁愛路四段20號",
+            "totalPrice": 45000000,
+            "buildingAreaPing": 48,
+            "landSharePing": null,
+            "parking": { "kind": "priced", "spaceCount": 1, "price": 5000000, "areaPing": 8 }
+          }
+        },
+        {
+          "distanceMeters": 50,
+          "deal": {
+            "asset": "parking",
+            "id": "A-parking",
+            "tradedOn": "2026-07-01",
+            "publishedAddress": "臺北市大安區仁愛路四段車位",
+            "totalPrice": 2500000,
+            "spaceCount": 1,
+            "areaPing": 6
+          }
+        },
+        {
+          "distanceMeters": 300,
+          "deal": {
+            "asset": "land",
+            "id": "A-land",
+            "tradedOn": "2026-04-01",
+            "publishedAddress": "臺北市大安區仁愛段",
+            "totalPrice": 80000000,
+            "landAreaPing": 40
+          }
+        },
+        {
+          "distanceMeters": 800,
+          "deal": {
+            "asset": "building",
+            "id": "A-far",
+            "tradedOn": "2026-09-01",
+            "publishedAddress": "臺北市大安區仁愛路四段80號",
+            "totalPrice": 10000000,
+            "buildingAreaPing": 10,
+            "landSharePing": null,
+            "parking": { "kind": "none" }
+          }
+        }
+      ]
+    }
+  ]
+}
