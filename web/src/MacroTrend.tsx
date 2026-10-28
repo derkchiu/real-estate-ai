@@ -41,9 +41,11 @@ export function LoadingPanel({ detail, testId }: { detail: string; testId: strin
 export function MacroTrendSection({
   busy,
   result,
+  error,
 }: {
   busy: boolean;
   result: CompetitorCrawlResult | null;
+  error: string | null;
 }) {
   return (
     <section className="mt-8 border-t border-slate-200 pt-8" aria-labelledby="macro-heading" data-testid="macro-trend">
@@ -58,14 +60,23 @@ export function MacroTrendSection({
       </div>
 
       <div className="mt-6">
-        {busy || result === null ? (
-          <LoadingPanel detail="正在透過線上競品爬蟲查核建設進度" testId="macro-loading" />
-        ) : (
+        {busy ? <LoadingPanel detail="同一筆查詢會帶出建設時間軸與查核雷達" testId="macro-loading" /> : null}
+        {!busy && result !== null ? (
           <div className="grid gap-4 min-[1080px]:grid-cols-2">
             <Timeline projects={result.projects} />
             <Grounding result={result} />
           </div>
-        )}
+        ) : null}
+        {!busy && result === null && error !== null ? (
+          <p role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-800">
+            時間軸與雷達圖沒有載入：{error}
+          </p>
+        ) : null}
+        {!busy && result === null && error === null ? (
+          <p className="rounded-2xl border border-dashed border-slate-300 bg-white/70 px-6 py-8 text-sm text-slate-500">
+            啟動行情分析後，這裡會顯示該行政區的重大建設時間軸與動態查核雷達。
+          </p>
+        ) : null}
       </div>
     </section>
   );

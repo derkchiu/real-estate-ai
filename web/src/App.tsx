@@ -1,14 +1,9 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import {
-  DEFAULT_FAILSAFE_POLICY,
-  MicroPricingInputError,
-  SCARCITY_WARNING,
-} from "../../src/micro-pricing/index.js";
-import { analyzeQuery, phaseLabel, readSubject, type AnalysisView, type StageLamp } from "./analyze.js";
-import { AS_OF, SAMPLE_QUERIES } from "./fixtures.js";
+import { useRef, useState, type FormEvent } from "react";
+import { DEFAULT_FAILSAFE_POLICY, SCARCITY_WARNING } from "../../src/micro-pricing/index.js";
+import { SAMPLE_QUERIES } from "./fixtures.js";
 import { LoadingPanel, MacroTrendSection } from "./MacroTrend.js";
 import { StrategyRoom } from "./StrategyRoom.js";
-import { crawlOnlineCompetitors, fetchInteriorActualPrices, type CompetitorCrawlResult } from "./services/api.js";
+import { fetchTransactions, type CompetitorCrawlResult, type MicroQuote, type StageLamp } from "./services/api.js";
 
 const [widenTime, widenDistance] = DEFAULT_FAILSAFE_POLICY.onNoData;
 const baseline = DEFAULT_FAILSAFE_POLICY.baseline;
@@ -49,53 +44,36 @@ export function App() {
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [view, setView] = useState<AnalysisView | null>(null);
+  const [view, setView] = useState<MicroQuote | null>(null);
   const [macro, setMacro] = useState<CompetitorCrawlResult | null>(null);
-  const [macroBusy, setMacroBusy] = useState(true);
+  const [asOf, setAsOf] = useState<string | null>(null);
   const runId = useRef(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    setMacroBusy(true);
-    void crawlOnlineCompetitors({ area: "台中市" })
-      .then((result) => {
-        if (cancelled) return;
-        setMacro(result);
-        setMacroBusy(false);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setMacro(null);
-        setMacroBusy(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const id = runId.current + 1;
     runId.current = id;
-    setError(null);
-
-    try {
-      readSubject(query);
-    } catch (caught) {
+    const address = query.trim();
+    if (address.length === 0) {
       setView(null);
-      setError(messageFrom(caught));
-      setBusy(false);
+      setMacro(null);
+      setAsOf(null);
+      setError("請輸入門牌地址或地號");
       return;
     }
-
     setBusy(true);
+    setError(null);
     try {
-      const feed = await fetchInteriorActualPrices(query);
+      const payload = await fetchTransactions(address);
       if (runId.current !== id) return;
-      setView(analyzeQuery(query, feed));
+      setView(payload.micro);
+      setMacro(payload.macro);
+      setAsOf(payload.asOf);
     } catch (caught) {
       if (runId.current !== id) return;
       setView(null);
+      setMacro(null);
+      setAsOf(null);
       setError(messageFrom(caught));
     } finally {
       if (runId.current === id) setBusy(false);
@@ -112,7 +90,7 @@ export function App() {
               <p className="text-xs tracking-[0.18em] text-brass">行情分析台</p>
               <h2 className="mt-1 text-2xl font-semibold tracking-tight text-ink sm:text-[1.7rem]">微觀實價比對</h2>
             </div>
-            <p className="text-sm text-slate-500">資料日 {AS_OF}</p>
+            <p className="text-sm text-slate-500">資料日 {asOf ?? "尚未查詢"}</p>
           </header>
 
           <form onSubmit={onSubmit} className="mt-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
@@ -153,7 +131,7 @@ export function App() {
               ))}
             </div>
             <p className="mt-3 text-xs leading-5 text-slate-500">
-              地號可寫成「臺北市大安區仁愛段 12」。行情依路段對資料庫：南興一路、仁愛路四段有成交；對不上的地址會走完三階防呆並亮紅燈。
+              請寫上縣市與行政區，例如「臺北市大安區仁愛路四段1號」。系統會下載該縣市這一季的內政部實價登錄，只留下同一個行政區。
             </p>
           </form>
 
@@ -164,12 +142,17 @@ export function App() {
           ) : null}
 
           <section aria-live="polite" className="mt-6">
-            {busy ? <LoadingPanel detail="正在向內政部實價登錄取得周邊成交" testId="searching" /> : null}
+            {busy ? (
+              <LoadingPanel
+                detail="正在下載內政部實價登錄並清洗，通常需要數秒，請先不要關閉畫面。"
+                testId="searching"
+              />
+            ) : null}
             {!busy && view === null && error === null ? <Idle /> : null}
             {!busy && view !== null ? <Result view={view} /> : null}
           </section>
 
-          <MacroTrendSection busy={macroBusy} result={macro} />
+          <MacroTrendSection busy={busy} result={macro} error={error} />
         </main>
       </div>
     </div>
@@ -217,11 +200,9 @@ function Idle() {
   );
 }
 
-function Result({ view }: { view: AnalysisView }) {
-  const result = view.quote.result;
-  const searched = result.history.searched;
-  const matched = result.kind === "matched" ? result : null;
-  const price = matched?.valuation.weightedAverage;
+function Result({ view }: { view: MicroQuote }) {
+  const searched = view.searched;
+  const price = view.weightedAverage;
 
   return (
     <div className="space-y-4" data-testid="result">
@@ -231,7 +212,7 @@ function Result({ view }: { view: AnalysisView }) {
           <p className="mt-2 truncate text-sm text-slate-600" data-testid="subject">
             {view.subjectLabel}
           </p>
-          {price !== undefined ? (
+          {price !== null ? (
             <div data-testid="average">
               <p className="mt-4 font-serif text-5xl leading-none tracking-tight text-ink sm:text-6xl">
                 {formatWan(price.averageUnitPricePerPing)}
@@ -250,7 +231,7 @@ function Result({ view }: { view: AnalysisView }) {
             <div data-testid="average">
               <p className="mt-4 font-serif text-5xl text-slate-300">—</p>
               <p data-testid="warning" className="mt-4 rounded-xl bg-rose-50 px-4 py-3 text-sm leading-6 text-rose-800">
-                {result.kind === "insufficient" ? result.warning : "沒有可計算的均價"}
+                {view.warning ?? "沒有可計算的均價"}
               </p>
             </div>
           )}
@@ -269,9 +250,11 @@ function Result({ view }: { view: AnalysisView }) {
             ))}
           </div>
           <p className="mt-5 text-xs leading-5 text-slate-500">
-            搜尋路徑：{view.quote.phases.map((phase) => phaseLabel(phase)).join(" → ")}
+            搜尋路徑：{view.phases.map((phase) => phaseLabel(phase)).join(" → ")}
             <span className="mx-2 text-slate-300">·</span>
-            停在 {searched.radiusMeters} 公尺 / {searched.withinMonths} 個月
+            {view.distanceKnown
+              ? `停在 ${searched.radiusMeters} 公尺 / ${searched.withinMonths} 個月`
+              : `時間窗 ${searched.withinMonths} 個月 · 同一行政區`}
           </p>
         </article>
       </div>
@@ -289,6 +272,8 @@ function Result({ view }: { view: AnalysisView }) {
         <p className="mt-1 text-emerald-900/80">
           本窗純車位 {view.excludedParking} 筆、純土地 {view.excludedLand} 筆，沒有進入分子或分母。
           {view.inseparable > 0 ? ` 另有 ${view.inseparable} 筆建物因車位無法拆分，未計入均價。` : ""}
+          {view.excludedInvalidUnitPrice > 0 ? ` 單價空白或為 0 的 ${view.excludedInvalidUnitPrice} 筆已剔除。` : ""}
+          {view.excludedAbnormal > 0 ? ` 備註含親友、關係人、毛胚或持分的 ${view.excludedAbnormal} 筆已剔除。` : ""}
         </p>
       </div>
 
@@ -305,16 +290,22 @@ function Result({ view }: { view: AnalysisView }) {
                 <th className="px-3 py-3 font-medium">交易日</th>
                 <th className="px-3 py-3 font-medium">標的</th>
                 <th className="px-3 py-3 font-medium">類型</th>
+                <th className="px-3 py-3 font-medium">單價</th>
                 <th className="px-5 py-3 font-medium">判定</th>
               </tr>
             </thead>
             <tbody>
               {view.rows.map((row) => (
                 <tr key={row.id} className="border-t border-slate-100">
-                  <td className="px-5 py-3 tabular-nums text-slate-700">{row.distanceMeters} m</td>
+                  <td className="px-5 py-3 tabular-nums text-slate-700">
+                    {view.distanceKnown ? `${row.distanceMeters} m` : "同區"}
+                  </td>
                   <td className="px-3 py-3 tabular-nums text-slate-600">{row.tradedOn}</td>
                   <td className="px-3 py-3 text-ink">{row.address}</td>
                   <td className="px-3 py-3 text-slate-600">{row.assetLabel}</td>
+                  <td className="px-3 py-3 tabular-nums text-slate-700">
+                    {row.unitPriceWanPerPing === null ? "—" : `${formatOneDecimal(row.unitPriceWanPerPing)} 萬`}
+                  </td>
                   <td className={`px-5 py-3 ${row.included ? "font-medium text-emerald-800" : "text-slate-500"}`}>
                     {row.verdict}
                   </td>
@@ -371,6 +362,26 @@ function formatNumber(value: number): string {
   return value.toLocaleString("zh-TW", { maximumFractionDigits: 2 });
 }
 
+function formatOneDecimal(value: number): string {
+  return value.toLocaleString("zh-TW", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+}
+
+function phaseLabel(phase: string): string {
+  switch (phase) {
+    case "baseline":
+      return "基準窗";
+    case "time-widened":
+      return "放寬時間";
+    case "distance-widened":
+      return "放寬距離";
+    case "exhausted":
+      return "停止擴張";
+    default:
+      return phase;
+  }
+}
+
 function messageFrom(caught: unknown): string {
-  return caught instanceof MicroPricingInputError ? caught.message : "分析失敗，請改寫標的後再試。";
+  if (caught instanceof Error && caught.message.trim().length > 0) return caught.message;
+  return "分析失敗，請改寫標的後再試。";
 }

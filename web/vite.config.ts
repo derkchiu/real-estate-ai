@@ -16,5 +16,12 @@ export default defineConfig({
     fs: {
       allow: [root, workspace],
     },
+    proxy: {
+      "/api": {
+        target: "https://real-estate-ai-derkchiu.vercel.app",
+        changeOrigin: true,
+        secure: true,
+      },
+    },
   },
 });
