@@ -4,5 +4,5 @@
     "rootDir": ".",
     "outDir": "dist-verify"
   },
-  "include": ["src", "tests"]
+  "include": ["src", "tests", "api"]
 }

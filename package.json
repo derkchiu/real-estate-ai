@@ -6,7 +6,8 @@
     "dev": "vite --config web/vite.config.ts",
     "typecheck": "tsc --noEmit",
     "check:schema": "tsc && node dist/micro-pricing/schema.contract.js",
-    "verify": "tsc -p tsconfig.verify.json && node dist-verify/tests/verify-micro-pricing.js"
+    "verify": "tsc -p tsconfig.verify.json && node dist-verify/tests/verify-micro-pricing.js",
+    "check:bff": "tsc -p tsconfig.verify.json && node dist-verify/tests/verify-bff.js"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.14",
