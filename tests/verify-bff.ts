@@ -2,7 +2,9 @@
  * BFF 驗證：政府資料清洗、加權均價、三階防呆，以及時間軸／雷達圖的 JSON 形狀。
  */
 import { GovUpstreamError } from "../src/bff/errors.js";
+import { GOV_OPEN_DATA_URL } from "../src/bff/gov-open-data.js";
 import { handleTransactionsRequest, type TransactionsDeps } from "../src/bff/http.js";
+import { buildGovOpenDataUrl, parseGovBody, rocDateToIso, unitPriceWanPerPing } from "../src/bff/moi-fields.js";
 
 const failures: string[] = [];
 const configured = "https://gov.example/actual-price";
@@ -78,6 +80,7 @@ const moi = await post(
         土地位置建物門牌: "台中市北屯區南興一路35號",
         總價元: 20_000_000,
         建物移轉總面積平方公尺: 10 * 3.305785,
+        單價元平方公尺: 60_000,
         距離公尺: 100,
       },
       {
@@ -87,6 +90,7 @@ const moi = await post(
         土地位置建物門牌: "台中市北屯區南興一路車位",
         總價元: 2_500_000,
         車位移轉總面積平方公尺: 6 * 3.305785,
+        單價元平方公尺: 20_000,
         距離公尺: 40,
       },
     ],
@@ -135,6 +139,7 @@ if (stopped.ok !== true || stopped.outcome !== "insufficient" || stopped.micro =
 }
 
 const unconfigured = await post({ query: "臺北市大安區仁愛路四段1號" }, {
+  govOpenDataUrl: "REPLACE_WITH_INTERIOR_ACTUAL_PRICE_ENDPOINT",
   today: () => "2026-10-21",
   fetchGov: async () => {
     failures.push("未設定網址時不該呼叫政府 API");
@@ -160,10 +165,88 @@ check(down.status === 502, "政府 503 應轉成 502");
 const badPayload = await post({ query: "臺北市大安區仁愛路四段1號" }, ready({ nope: true }));
 check(badPayload.status === 422, "無法辨識的政府 JSON 應為 422");
 
+const cleaned = await post({ query: "臺北市大安區仁愛路四段1號" }, ready({
+  records: [
+    {
+      鄉鎮市區: "大安區",
+      編號: "keep",
+      交易標的: "房地",
+      交易年月日: "1150601",
+      土地位置建物門牌: "臺北市大安區仁愛路四段10號",
+      總價元: 20_000_000,
+      建物移轉總面積平方公尺: 10 * 3.305785,
+      單價元平方公尺: 60_000,
+      備註: "",
+    },
+    {
+      鄉鎮市區: "大安區",
+      編號: "relative",
+      交易標的: "房地",
+      交易年月日: "1150602",
+      土地位置建物門牌: "臺北市大安區仁愛路四段11號",
+      總價元: 30_000_000,
+      建物移轉總面積平方公尺: 10 * 3.305785,
+      單價元平方公尺: 90_000,
+      備註: "親友、員工、共有人或其他特殊關係間之交易",
+    },
+    {
+      鄉鎮市區: "大安區",
+      編號: "blank-price",
+      交易標的: "房地",
+      交易年月日: "1150603",
+      土地位置建物門牌: "臺北市大安區仁愛路四段12號",
+      總價元: 10_000_000,
+      建物移轉總面積平方公尺: 10 * 3.305785,
+      單價元平方公尺: 0,
+      備註: "持分",
+    },
+    {
+      鄉鎮市區: "信義區",
+      編號: "other-district",
+      交易標的: "房地",
+      交易年月日: "1150604",
+      土地位置建物門牌: "臺北市信義區市府路1號",
+      總價元: 50_000_000,
+      建物移轉總面積平方公尺: 10 * 3.305785,
+      單價元平方公尺: 150_000,
+      備註: "",
+    },
+    {
+      鄉鎮市區: "大安區",
+      編號: "shell",
+      交易標的: "房地",
+      交易年月日: "1150605",
+      土地位置建物門牌: "臺北市大安區仁愛路四段13號",
+      總價元: 40_000_000,
+      建物移轉總面積平方公尺: 10 * 3.305785,
+      單價元平方公尺: 120_000,
+      備註: "毛胚屋",
+    },
+  ],
+}));
+const cleanedBody = await json(cleaned);
+if (cleanedBody.ok !== true || cleanedBody.micro === null || cleanedBody.micro === undefined) {
+  failures.push("(清洗) 有效成交應算出均價");
+} else {
+  check(cleaned.status === 200, "(清洗) 缺距離時仍回 200，因為官方檔沒有距離");
+  check(cleanedBody.micro.weightedAverage?.dealIds.length === 1, "(清洗) 只有一筆進入均價");
+  check(cleanedBody.micro.weightedAverage?.dealIds.includes("keep") === true, "(清洗) 正常建物有計入");
+  check(cleanedBody.micro.excludedAbnormal === 2, "(清洗) 親友與毛胚不進均價");
+  check(cleanedBody.micro.excludedInvalidUnitPrice === 1, "(清洗) 單價 0 被剔除");
+  check(cleanedBody.micro.distanceKnown === false, "(清洗) 沒有距離公尺就不要宣稱是半徑搜尋");
+  check(cleanedBody.micro.stage.detail.includes("不是 500 公尺圓"), "(清洗) 燈號說明寫明不是 500 公尺圓");
+  const kept = cleanedBody.micro.rows.find((row) => row.id === "keep");
+  check(kept?.unitPriceWanPerPing === 19.8, "(清洗) 60000 元/平方公尺是 19.8 萬/坪");
+  check(kept?.tradedOn === "2026-06-01", "(清洗) 1150601 轉成 2026-06-01");
+  check(cleanedBody.micro.rows.some((row) => row.id === "relative" && row.verdict === "已排除・備註異常"), "(清洗) 親友交易留在清單但標成排除");
+  check(!cleanedBody.micro.rows.some((row) => row.id === "other-district"), "(清洗) 別的行政區不進入這次查詢");
+  check(!cleanedBody.micro.rows.some((row) => row.id === "blank-price"), "(清洗) 單價 0 不留在清單");
+}
+
 const noDistance = await post({ query: "臺北市大安區仁愛路四段1號" }, ready({
   records: [{ 編號: "x", 交易標的: "房地", 交易年月日: "1150601", 土地位置建物門牌: "某址", 總價元: 1, 建物移轉總面積平方公尺: 30 }],
 }));
-check(noDistance.status === 422, "沒有距離不能假裝做過半徑防呆");
+check(noDistance.status === 200, "沒有單價的官方列被剔除，請求本身仍然完成");
 
 const emptyQuery = await get("https://real-estate-ai.local/api/transactions");
 check(emptyQuery.status === 400, "空白查詢應為 400");
@@ -177,6 +260,25 @@ if (macroBody.ok === true) {
   check(macroBody.macro.projects[0]?.state === "verified", "已驗證建設的狀態");
   check(macroBody.macro.projects[1]?.state === "verifying", "驗證中建設的狀態");
 }
+
+if (failures.length > 0) {
+  throw new Error(failures.map((failure) => `FAIL ${failure}`).join("\n"));
+}
+
+check(rocDateToIso(1121015) === "2023-10-15", "民國 1121015 是 2023-10-15");
+check(rocDateToIso("1150902") === "2026-09-02", "民國 1150902 是 2026-09-02");
+check(unitPriceWanPerPing(82_975) === 27.4, "82975 元/平方公尺是 27.4 萬/坪");
+const endpoint = buildGovOpenDataUrl("臺北市大安區仁愛路四段1號", "2026-10-21", GOV_OPEN_DATA_URL);
+check(endpoint.startsWith("https://plvr.land.moi.gov.tw/DownloadSeason?"), "使用內政部 DownloadSeason");
+check(endpoint.includes("season=115S3"), "2026 年 10 月抓上一季 115S3");
+check(endpoint.includes("fileName=A_lvr_land_A.csv"), "臺北市檔名是 A_lvr_land_A.csv");
+const table = parseGovBody(`鄉鎮市區,交易標的,土地位置建物門牌,交易年月日,總價元,單價元平方公尺,建物移轉總面積平方公尺,備註
+district,sign,plate,day,price,unit,area,note
+大安區,房地,臺北市大安區仁愛路,"1150601",20000000,60000,33.06,"親友、員工，含逗號"
+`);
+const first = Array.isArray(table) ? (table[0] as { 備註?: string; 交易年月日?: string }) : undefined;
+check(first?.交易年月日 === "1150601", "CSV 會跳過英文標題列");
+check(first?.備註 === "親友、員工，含逗號", "備註裡的逗號不會把欄位切開");
 
 if (failures.length > 0) {
   throw new Error(failures.map((failure) => `FAIL ${failure}`).join("\n"));
@@ -233,48 +335,34 @@ function building(
   };
 }
 
-async function json(response: Response): Promise<{
+type ApiBody = {
   ok: boolean;
   outcome?: string;
   micro?: {
     warning: string | null;
-    stage: { lamp: string };
+    stage: { lamp: string; detail: string };
     excludedParking: number;
     excludedLand: number;
+    excludedAbnormal: number;
+    excludedInvalidUnitPrice: number;
+    distanceKnown: boolean;
     weightedAverage: {
       averageUnitPricePerPing: number;
       netPriceTotal: number;
       netPingTotal: number;
       dealIds: string[];
     } | null;
+    rows: { id: string; tradedOn: string; verdict: string; unitPriceWanPerPing: number | null }[];
   } | null;
   macro: {
     area: string;
     provider: string;
     projects: { id: string; state: string; milestone: string | null }[];
   };
-}> {
-  return response.json() as Promise<{
-    ok: boolean;
-    outcome?: string;
-    micro?: {
-      warning: string | null;
-      stage: { lamp: string };
-      excludedParking: number;
-      excludedLand: number;
-      weightedAverage: {
-        averageUnitPricePerPing: number;
-        netPriceTotal: number;
-        netPingTotal: number;
-        dealIds: string[];
-      } | null;
-    } | null;
-    macro: {
-      area: string;
-      provider: string;
-      projects: { id: string; state: string; milestone: string | null }[];
-    };
-  }>;
+};
+
+async function json(response: Response): Promise<ApiBody> {
+  return response.json() as Promise<ApiBody>;
 }
 
 function check(condition: boolean, message: string): void {

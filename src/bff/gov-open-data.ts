@@ -1,14 +1,15 @@
 import { GovNotConfiguredError, GovPayloadError, GovUpstreamError } from "./errors.js";
+import { parseGovBody } from "./moi-fields.js";
 
 /**
- * 內政部不動產實價登錄 Open Data 的預留位置。
- * 換成實際的 https 端點後，`/api/transactions` 才會向外抓資料。
- * 在那之前故意不是網址，請求會回 503，不會打到猜出來的主機。
+ * 內政部不動產成交案件實際資訊資料供應系統。
+ * 依縣市組出 `season` 與 `fileName`，例如 115S3 的臺北市買賣檔。
+ * 實際回應是 CSV，進 API 前會轉成與開放資料 JSON 相同的一列一個物件。
  */
-export const GOV_OPEN_DATA_URL = "REPLACE_WITH_INTERIOR_ACTUAL_PRICE_ENDPOINT";
+export const GOV_OPEN_DATA_URL = "https://plvr.land.moi.gov.tw/DownloadSeason";
 
-export const GOV_FETCH_TIMEOUT_MS = 8_000;
-const MAX_GOV_BODY_CHARS = 5_000_000;
+export const GOV_FETCH_TIMEOUT_MS = 20_000;
+const MAX_GOV_BODY_CHARS = 20_000_000;
 
 export function isGovOpenDataConfigured(url: string): boolean {
   try {
@@ -39,14 +40,14 @@ export async function fetchGovOpenData(input: {
     );
   }
 
-  const endpoint = new URL(input.url);
-  endpoint.searchParams.set("q", input.query);
-
   let response: Response;
   try {
-    response = await fetch(endpoint, {
+    response = await fetch(input.url, {
       method: "GET",
-      headers: { accept: "application/json" },
+      headers: {
+        accept: "text/csv, application/json;q=0.9, */*;q=0.8",
+        "user-agent": "real-estate-ai/1.0",
+      },
       signal: input.signal,
       redirect: "follow",
     });
@@ -63,11 +64,7 @@ export async function fetchGovOpenData(input: {
   if (text.length > MAX_GOV_BODY_CHARS) {
     throw new GovPayloadError("政府回傳超過可處理的大小");
   }
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    throw new GovPayloadError("政府回傳不是 JSON");
-  }
+  return parseGovBody(text);
 }
 
 export function isTimeoutError(caught: unknown): boolean {

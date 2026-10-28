@@ -1,5 +1,12 @@
 import { GovPayloadError } from "./errors.js";
 import {
+  hasAbnormalRemark,
+  readUnitPricePerSqm,
+  rocDateToIso,
+  samePlaceName,
+  unitPriceWanPerPing,
+} from "./moi-fields.js";
+import {
   buildingDeal,
   calendarDate,
   distanceMeters,
@@ -11,15 +18,37 @@ import {
 
 const SQM_PER_PING = 3.305785;
 
+export type AbnormalRow = {
+  readonly id: string;
+  readonly address: string;
+  readonly tradedOn: string;
+  readonly assetLabel: string;
+  readonly unitPriceWanPerPing: number;
+};
+
 export type NormalizedFeed = {
   readonly asOf: string | null;
   readonly listings: readonly NearbyInput[];
+  readonly distanceKnown: boolean;
+  readonly excludedInvalidUnitPrice: number;
+  readonly excludedAbnormal: readonly AbnormalRow[];
+  readonly unitPrices: ReadonlyMap<string, number>;
 };
 
-/** 把政府 JSON 收成行情引擎吃的周邊成交。純車位與純土地留著，交給三階防呆判斷。 */
-export function normalizeGovPayload(payload: unknown): NormalizedFeed {
+const NO_MOI_FILTER: Pick<
+  NormalizedFeed,
+  "distanceKnown" | "excludedInvalidUnitPrice" | "excludedAbnormal" | "unitPrices"
+> = {
+  distanceKnown: true,
+  excludedInvalidUnitPrice: 0,
+  excludedAbnormal: [],
+  unitPrices: new Map<string, number>(),
+};
+
+/** 把政府 JSON 或 CSV 轉成的列收成行情引擎吃的周邊成交。純車位與純土地留著，交給三階防呆判斷。 */
+export function normalizeGovPayload(payload: unknown, district: string | null = null): NormalizedFeed {
   if (Array.isArray(payload)) {
-    return { asOf: null, listings: payload.map((row, index) => readMoi(row, index)) };
+    return { ...readMoiBatch(payload, district), asOf: null };
   }
   if (!isRecord(payload)) {
     throw new GovPayloadError("政府回傳必須是 JSON 物件或陣列");
@@ -27,10 +56,14 @@ export function normalizeGovPayload(payload: unknown): NormalizedFeed {
 
   const asOf = readOptionalDate(payload.asOf);
   if (Array.isArray(payload.listings)) {
-    return { asOf, listings: payload.listings.map((row, index) => readPrepared(row, index)) };
+    return {
+      asOf,
+      listings: payload.listings.map((row, index) => readPrepared(row, index)),
+      ...NO_MOI_FILTER,
+    };
   }
   if (Array.isArray(payload.records)) {
-    return { asOf, listings: payload.records.map((row, index) => readMoi(row, index)) };
+    return { ...readMoiBatch(payload.records, district), asOf };
   }
   throw new GovPayloadError("政府回傳缺少 listings 或 records");
 }
@@ -39,7 +72,7 @@ function readPrepared(raw: unknown, index: number): NearbyInput {
   if (!isRecord(raw) || !isRecord(raw.deal)) {
     throw new GovPayloadError(`第 ${index + 1} 筆成交格式不正確`);
   }
-  const meters = readDistance(raw.distanceMeters, index);
+  const meters = requiredDistance(raw.distanceMeters, index);
   try {
     return { distanceMeters: distanceMeters(meters), deal: readPreparedDeal(raw.deal) };
   } catch (caught) {
@@ -85,11 +118,72 @@ function readPreparedDeal(raw: Record<string, unknown>) {
   throw new GovPayloadError("成交類型必須是 building、land 或 parking");
 }
 
-function readMoi(raw: unknown, index: number): NearbyInput {
+function readMoiBatch(rows: readonly unknown[], district: string | null): Omit<NormalizedFeed, "asOf"> {
+  const listings: NearbyInput[] = [];
+  const excludedAbnormal: AbnormalRow[] = [];
+  const unitPrices = new Map<string, number>();
+  let excludedInvalidUnitPrice = 0;
+  let sawUnknownDistance = false;
+  let sawKnownDistance = false;
+
+  rows.forEach((raw, index) => {
+    if (!isRecord(raw) || !inDistrict(raw, district)) return;
+    const unitPrice = readUnitPricePerSqm(raw["單價元平方公尺"]);
+    if (unitPrice === null) {
+      excludedInvalidUnitPrice += 1;
+      return;
+    }
+    const remark = textOr(raw, ["備註"], "");
+    const wan = unitPriceWanPerPing(unitPrice);
+    if (hasAbnormalRemark(remark)) {
+      let tradedOn = "";
+      try {
+        tradedOn = rocDateToIso(dateValue(raw["交易年月日"] ?? raw.tradedOn));
+      } catch {
+        excludedInvalidUnitPrice += 1;
+        return;
+      }
+      excludedAbnormal.push({
+        id: textOr(raw, ["編號", "id"], `abnormal-${index + 1}`),
+        address: textOr(raw, ["土地位置建物門牌", "publishedAddress"], "未提供地址"),
+        tradedOn,
+        assetLabel: assetLabelFromTarget(raw["交易標的"] ?? raw.asset),
+        unitPriceWanPerPing: wan,
+      });
+      return;
+    }
+    const distance = readOptionalDistance(raw["距離公尺"] ?? raw.distanceMeters);
+    if (distance.known) sawKnownDistance = true;
+    else sawUnknownDistance = true;
+    try {
+      const listing = readMoi(raw, index, distance.meters);
+      listings.push(listing);
+      unitPrices.set(listing.deal.id, wan);
+    } catch {
+      excludedInvalidUnitPrice += 1;
+    }
+  });
+
+  return {
+    listings,
+    distanceKnown: sawKnownDistance && !sawUnknownDistance,
+    excludedInvalidUnitPrice,
+    excludedAbnormal,
+    unitPrices,
+  };
+}
+
+function inDistrict(raw: Record<string, unknown>, district: string | null): boolean {
+  if (district === null) return true;
+  const value = textOr(raw, ["鄉鎮市區"], "");
+  if (value.length === 0) return true;
+  return samePlaceName(value, district);
+}
+
+function readMoi(raw: unknown, index: number, meters: number): NearbyInput {
   if (!isRecord(raw)) throw new GovPayloadError(`第 ${index + 1} 筆不是物件`);
-  const meters = readDistance(raw["距離公尺"] ?? raw.distanceMeters, index);
   const id = textOr(raw, ["編號", "id"], `gov-${index + 1}`);
-  const tradedOn = toIsoDate(raw["交易年月日"] ?? raw.tradedOn, index);
+  const tradedOn = toIsoDate(raw["交易年月日"] ?? raw.tradedOn);
   const publishedAddress = textOr(raw, ["土地位置建物門牌", "publishedAddress"], "");
   if (publishedAddress.length === 0) {
     throw new GovPayloadError(`第 ${index + 1} 筆缺少土地位置建物門牌`);
@@ -154,8 +248,10 @@ function moiAsset(raw: unknown, index: number): "building" | "land" | "parking" 
 function moiParking(raw: Record<string, unknown>) {
   const price = optionalInteger(raw, ["車位總價元"]);
   const area = optionalPing(raw, ["車位移轉總面積平方公尺"]);
-  if (price === undefined && area === undefined) return { kind: "none" as const };
-  const spaceCount = positiveOr(raw, ["車位移轉總筆數"], 1);
+  const category = textOr(raw, ["車位類別"], "");
+  const hasParking = (price !== undefined && price > 0) || area !== undefined || category.length > 0;
+  if (!hasParking) return { kind: "none" as const };
+  const spaceCount = positiveOr(raw, ["車位移轉總筆數", "spaceCount"], 1);
   if (price === undefined || price <= 0) {
     return { kind: "unpriced" as const, spaceCount, areaPing: area ?? null };
   }
@@ -182,11 +278,31 @@ function optionalPing(raw: Record<string, unknown>, keys: readonly string[]): nu
   return undefined;
 }
 
-function readDistance(raw: unknown, index: number): number {
+function requiredDistance(raw: unknown, index: number): number {
   if (typeof raw !== "number" || !Number.isFinite(raw)) {
-    throw new GovPayloadError(`第 ${index + 1} 筆缺少距離公尺，還不能做半徑防呆`);
+    throw new GovPayloadError(`第 ${index + 1} 筆缺少距離公尺`);
   }
   return raw;
+}
+
+function readOptionalDistance(raw: unknown): { readonly meters: number; readonly known: boolean } {
+  if (raw === undefined || raw === null || (typeof raw === "string" && raw.trim().length === 0)) {
+    return { meters: 0, known: false };
+  }
+  const amount = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(amount)) return { meters: 0, known: false };
+  return { meters: amount, known: true };
+}
+
+function assetLabelFromTarget(raw: unknown): string {
+  if (raw === "車位" || raw === "parking") return "車位";
+  if (raw === "土地" || raw === "land") return "土地";
+  return "建物";
+}
+
+function dateValue(raw: unknown): string | number {
+  if (typeof raw === "string" || typeof raw === "number") return raw;
+  return "";
 }
 
 function readOptionalDate(raw: unknown): string | null {
@@ -200,16 +316,11 @@ function readOptionalDate(raw: unknown): string | null {
   }
 }
 
-function toIsoDate(raw: unknown, index: number): string {
+function toIsoDate(raw: unknown): string {
   if (typeof raw !== "string" && typeof raw !== "number") {
-    throw new GovPayloadError(`第 ${index + 1} 筆缺少交易年月日`);
+    throw new GovPayloadError("缺少交易年月日");
   }
-  const text = String(raw).trim();
-  if (/^\d{4}-\d{2}-\d{2}$/u.test(text)) return text;
-  const digits = text.replace(/\D/gu, "");
-  if (digits.length !== 7) throw new GovPayloadError(`第 ${index + 1} 筆的交易年月日無法換算`);
-  const rocYear = Number(digits.slice(0, 3));
-  return `${rocYear + 1911}-${digits.slice(3, 5)}-${digits.slice(5, 7)}`;
+  return rocDateToIso(raw);
 }
 
 function readParking(raw: unknown) {
@@ -284,10 +395,11 @@ function integerField(raw: Record<string, unknown>, key: string): number {
 }
 
 function integerValue(value: unknown, key: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
+  const amount = typeof value === "number" ? value : typeof value === "string" ? Number(value.trim()) : Number.NaN;
+  if (!Number.isSafeInteger(amount)) {
     throw new GovPayloadError(`${key} 必須是整數元`);
   }
-  return value;
+  return amount;
 }
 
 function nullableNumber(raw: Record<string, unknown>, key: string): number | null {

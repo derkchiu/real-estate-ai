@@ -7,6 +7,8 @@
  */
 import { handleTransactionsRequest } from "../src/bff/http.js";
 
+export const maxDuration = 30;
+
 export function GET(request: Request): Promise<Response> {
   return handleTransactionsRequest(request);
 }

@@ -9,6 +9,7 @@ import {
   taipeiToday,
 } from "./gov-open-data.js";
 import { areaFromQuery, macroTimeline, type MacroTimelinePayload } from "./macro-timeline.js";
+import { buildGovOpenDataUrl, locateGovFile } from "./moi-fields.js";
 import { normalizeGovPayload } from "./normalize-listings.js";
 import { quoteNormalized, readSubject, type MicroQuotePayload } from "./quote-response.js";
 
@@ -70,10 +71,12 @@ export async function handleTransactionsRequest(request: Request, deps: Transact
       );
     }
 
-    const payload = await loadGovPayload(asked.query, url, deps.fetchGov);
+    const located = locateGovFile(asked.query);
+    const endpoint = buildGovOpenDataUrl(asked.query, today, url);
+    const payload = await loadGovPayload(asked.query, endpoint, deps.fetchGov);
     const quoted = quoteNormalized({
       query: asked.query,
-      feed: normalizeGovPayload(payload),
+      feed: normalizeGovPayload(payload, located.district),
       today,
     });
     return ok({

@@ -25,6 +25,8 @@ export type DealRow = {
   readonly assetLabel: string;
   readonly verdict: string;
   readonly included: boolean;
+  /** 由「單價元平方公尺」換算。政府檔沒有這個欄位時是 null。 */
+  readonly unitPriceWanPerPing: number | null;
 };
 
 export type MicroQuotePayload = {
@@ -53,6 +55,9 @@ export type MicroQuotePayload = {
   readonly excludedParking: number;
   readonly excludedLand: number;
   readonly inseparable: number;
+  readonly excludedInvalidUnitPrice: number;
+  readonly excludedAbnormal: number;
+  readonly distanceKnown: boolean;
   readonly rows: readonly DealRow[];
 };
 
@@ -91,11 +96,11 @@ export function quoteNormalized(input: {
   return {
     outcome: quote.result.kind === "matched" ? "matched" : "insufficient",
     asOf,
-    micro: serializeQuote(subject, quote),
+    micro: serializeQuote(subject, quote, input.feed),
   };
 }
 
-function serializeQuote(subject: Property, quote: MarketQuote): MicroQuotePayload {
+function serializeQuote(subject: Property, quote: MarketQuote, feed: NormalizedFeed): MicroQuotePayload {
   const searched = quote.result.history.searched;
   const matched = quote.result.kind === "matched" ? quote.result.valuation.weightedAverage : null;
   const included = new Set(matched === null ? [] : matched.dealIds);
@@ -117,17 +122,32 @@ function serializeQuote(subject: Property, quote: MarketQuote): MicroQuotePayloa
       assetLabel: assetLabel(record.deal.asset),
       verdict: verdictLabel(reason),
       included: included.has(record.deal.id),
+      unitPriceWanPerPing: feed.unitPrices.get(record.deal.id) ?? null,
+    });
+  }
+  for (const abnormal of feed.excludedAbnormal) {
+    rows.push({
+      id: abnormal.id,
+      address: abnormal.address,
+      tradedOn: abnormal.tradedOn,
+      distanceMeters: 0,
+      assetLabel: abnormal.assetLabel,
+      verdict: "已排除・備註異常",
+      included: false,
+      unitPriceWanPerPing: abnormal.unitPriceWanPerPing,
     });
   }
   rows.sort((left, right) => left.distanceMeters - right.distanceMeters);
 
   const warning = quote.result.kind === "insufficient" ? quote.result.warning : null;
+  const note = feed.distanceKnown
+    ? (warning ?? `已用 ${searched.radiusMeters} 公尺 / ${searched.withinMonths} 個月算出扣除車位後的加權均價。`)
+    : (warning ??
+      `同一行政區的實價登錄。單價無效 ${feed.excludedInvalidUnitPrice} 筆、備註異常 ${feed.excludedAbnormal.length} 筆已剔除。`);
   return {
     subjectLabel: formatSubject(subject),
-    note:
-      warning ??
-      `已用 ${searched.radiusMeters} 公尺 / ${searched.withinMonths} 個月算出扣除車位後的加權均價。`,
-    stage: stageView(quote),
+    note,
+    stage: stageView(quote, feed.distanceKnown),
     phases: quote.phases,
     searched: {
       phase: searched.phase,
@@ -148,13 +168,33 @@ function serializeQuote(subject: Property, quote: MarketQuote): MicroQuotePayloa
     excludedParking,
     excludedLand,
     inseparable,
+    excludedInvalidUnitPrice: feed.excludedInvalidUnitPrice,
+    excludedAbnormal: feed.excludedAbnormal.length,
+    distanceKnown: feed.distanceKnown,
     rows,
   };
 }
 
-function stageView(quote: MarketQuote): MicroQuotePayload["stage"] {
+function stageView(quote: MarketQuote, distanceKnown: boolean): MicroQuotePayload["stage"] {
   const searched = quote.result.history.searched;
   const windowText = `${searched.radiusMeters} 公尺 / ${searched.withinMonths} 個月`;
+  const measured = measuredStage(quote, windowText);
+  if (distanceKnown) return measured;
+  const monthsText = `${searched.withinMonths} 個月`;
+  if (searched.phase === "exhausted") {
+    return {
+      ...measured,
+      detail: `同一行政區在近 ${monthsText}內沒有可計價成交。${quote.result.kind === "insufficient" ? quote.result.warning : SCARCITY_WARNING}`,
+    };
+  }
+  return {
+    ...measured,
+    detail: `內政部開放資料沒有每筆距離。這一階比的是同一行政區、近 ${monthsText}的成交，不是 ${searched.radiusMeters} 公尺圓。`,
+  };
+}
+
+function measuredStage(quote: MarketQuote, windowText: string): MicroQuotePayload["stage"] {
+  const searched = quote.result.history.searched;
   switch (searched.phase) {
     case "baseline":
       return {
